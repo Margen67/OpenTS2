@@ -38,6 +38,8 @@ namespace OpenTS2.Rendering
             RegisterMaterial<SimSkinMaterial>();
             RegisterMaterial<SimStandardMaterial>();
 
+            RegisterMaterial<WaterAnimatingTexturesMaterial>();
+
             // Ideally we'd just disable the mesh renderer to save a draw call but Maxis had to make it weird of course.
             // Could maybe have an ApplyToRenderer(MeshRenderer, MaterialDef) function that does just that if the material def is Null instead.
             RegisterMaterial<NullMaterial>();
