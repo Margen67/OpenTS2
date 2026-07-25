@@ -77,6 +77,7 @@ namespace OpenTS2.Content.DBPF.Scenegraph
 
             BoneAssignmentsElement boneAssignment = null;
             IBoneWeightsElement boneWeights = null;
+            var uvChannelCount = 0;
 
             foreach (var geometryElement in elements)
             {
@@ -100,7 +101,9 @@ namespace OpenTS2.Content.DBPF.Scenegraph
                         mesh.SetTangents(tangents);
                         break;
                     case UVMapElement uvMap:
-                        mesh.SetUVs(0, GetUVMapForMeshComponent(uvMap, meshComponent));
+                        // A Mesh can carry multiple UV channels!
+                        mesh.SetUVs(uvChannelCount, GetUVMapForMeshComponent(uvMap, meshComponent));
+                        uvChannelCount++;
                         break;
 
                     // Set the bone assignment and weights when they show up so they can be added to the mesh.
