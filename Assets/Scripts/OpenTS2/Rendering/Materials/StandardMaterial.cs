@@ -45,11 +45,30 @@ namespace OpenTS2.Rendering.Materials
         /// the material that references them. Try the referencing material's own group first since
         /// that covers the common case cheaply, then fall back to a group-agnostic search.
         /// </summary>
-        private static ScenegraphTextureAsset GetTextureAssetByName(string name, uint referencingGroupID)
+        public static ScenegraphTextureAsset GetTextureAssetByName(string name, uint referencingGroupID)
         {
             var key = new ResourceKey(name + "_txtr", referencingGroupID, TypeIDs.SCENEGRAPH_TXTR);
             var texture = ContentManager.Instance.GetAsset<ScenegraphTextureAsset>(key);
             return texture ?? ContentManager.Instance.GetEntryIgnoringGroup(key)?.GetAsset<ScenegraphTextureAsset>();
+        }
+
+        /// <summary>
+        /// Alpha-blends overlayTexture over baseTexture, per-pixel, using the overlay's own alpha
+        /// channel as the blend weight (0 = base shows through, 255 = overlay fully replaces it).
+        /// Both textures must be the same dimensions - callers are expected to check that first.
+        /// </summary>
+        public static Texture2D AlphaComposite(Texture2D baseTexture, Texture2D overlayTexture)
+        {
+            var result = new Texture2D(baseTexture.width, baseTexture.height, TextureFormat.RGBA32, mipChain: false);
+            var basePixels = baseTexture.GetPixels32();
+            var overlayPixels = overlayTexture.GetPixels32();
+            for (var p = 0; p < basePixels.Length; p++)
+            {
+                basePixels[p] = Color32.Lerp(basePixels[p], overlayPixels[p], overlayPixels[p].a / 255f);
+            }
+            result.SetPixels32(basePixels);
+            result.Apply();
+            return result;
         }
 
         /// <summary>
@@ -96,19 +115,7 @@ namespace OpenTS2.Rendering.Materials
                     continue;
                 }
 
-                var basePixels = result.GetPixels32();
-                var overlayPixels = layerTexture.GetPixels32();
-                var maxOverlayAlpha = 0;
-                for (var p = 0; p < basePixels.Length; p++)
-                {
-                    if (overlayPixels[p].a > maxOverlayAlpha)
-                    {
-                        maxOverlayAlpha = overlayPixels[p].a;
-                    }
-                    var blended = Color32.Lerp(basePixels[p], overlayPixels[p], overlayPixels[p].a / 255f);
-                    basePixels[p] = blended;
-                }
-                result.SetPixels32(basePixels);
+                result = AlphaComposite(result, layerTexture);
             }
 
             result?.Apply();

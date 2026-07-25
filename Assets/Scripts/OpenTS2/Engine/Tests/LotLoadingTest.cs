@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using OpenTS2.Common;
+using OpenTS2.Components;
 using OpenTS2.Content;
 using OpenTS2.Content.DBPF;
 using OpenTS2.Content.DBPF.Scenegraph;
@@ -143,21 +143,37 @@ namespace OpenTS2.Engine.Tests
                 try
                 {
                     var lotObject = entry.GetAsset<LotObjectAsset>();
-                    // Empty resource name implies no scenegraph resource.
-                    if (lotObject.Object.ResourceName == "")
+                    GameObject model;
+
+                    if (lotObject.Object is LotObjectAsset.PersonObject)
                     {
-                        continue;
+                        // Sims have no named base resource - their body/outfit is assembled from CAS
+                        // outfit data in a dedicated per-sim package instead.
+                        model = SimCharacterComponent.CreatePersonOutfit(neighborhoodPrefix, entry.TGI.InstanceID, entry.GlobalTGI);
+                        if (model == null)
+                        {
+                            continue;
+                        }
                     }
-                    var resource = contentManager.GetAsset<ScenegraphResourceAsset>(
-                        new ResourceKey(lotObject.Object.ResourceName + "_cres", GroupIDs.Scenegraph,
-                            TypeIDs.SCENEGRAPH_CRES));
-                    if (resource == null)
+                    else
                     {
-                        Debug.Log($"Could not find lot object: {lotObject.Object.ResourceName} / TGI: {entry.GlobalTGI}");
-                        continue;
+                        // Empty resource name implies no scenegraph resource.
+                        if (lotObject.Object.ResourceName == "")
+                        {
+                            continue;
+                        }
+                        var resource = contentManager.GetAsset<ScenegraphResourceAsset>(
+                            new ResourceKey(lotObject.Object.ResourceName + "_cres", GroupIDs.Scenegraph,
+                                TypeIDs.SCENEGRAPH_CRES));
+                        if (resource == null)
+                        {
+                            Debug.Log($"Could not find lot object: {lotObject.Object.ResourceName} / TGI: {entry.GlobalTGI}");
+                            continue;
+                        }
+
+                        model = resource.CreateRootGameObject();
                     }
 
-                    var model = resource.CreateRootGameObject();
                     model.transform.GetChild(0).localPosition = lotObject.Object.Position;
                     model.transform.GetChild(0).localRotation = lotObject.Object.Rotation;
 

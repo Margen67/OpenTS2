@@ -18,6 +18,17 @@ namespace OpenTS2.Content.DBPF.Scenegraph
             ImageDataBlock = imageDataBlock;
         }
 
+        /// <summary>
+        /// Wraps an already-built Texture2D directly, bypassing ImageDataBlock decoding entirely.
+        /// Used for synthetic, runtime-only textures (see SkinCompositing) that were never backed
+        /// by a real TXTR resource in the first place.
+        /// </summary>
+        public ScenegraphTextureAsset(Texture2D precomputedTexture)
+        {
+            ImageDataBlock = null;
+            _texture = precomputedTexture;
+        }
+
         private Texture2D _texture;
 
         public override void FreeUnmanagedResources()

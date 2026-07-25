@@ -31,45 +31,71 @@ namespace OpenTS2.Components
 
         public static GameObject CreateRootScenegraph(params ScenegraphResourceAsset[] resourceAssets)
         {
-            var scenegraph = CreateScenegraphComponent(resourceAssets);
-            var simsTransform = new GameObject(scenegraph.name + "_transform");
-
-            // Apply a transformation to convert from the sims coordinate space to unity.
-            simsTransform.transform.Rotate(-90, 0, 0);
-            simsTransform.transform.localScale = new Vector3(1, -1, 1);
-
-            scenegraph.transform.SetParent(simsTransform.transform, worldPositionStays:false);
-            return simsTransform;
+            var scenegraph = CreateScenegraphComponent(resourceAssets, materialOverridesBySubset: null);
+            return WrapInSimsToUnityTransform(scenegraph.gameObject);
         }
 
         /// <summary>
         /// Same as `CreateRootScenegraph` except it doesn't apply the transform from sims to unity space.
         /// </summary>
-        public static ScenegraphComponent CreateScenegraphComponent(ScenegraphResourceAsset resourceAsset)
+        public static ScenegraphComponent CreateScenegraphComponent(ScenegraphResourceAsset resourceAsset,
+            Dictionary<string, ScenegraphMaterialDefinitionAsset> materialOverridesBySubset = null)
         {
-            return CreateScenegraphComponent(new[] { resourceAsset });
+            return CreateScenegraphComponent(new[] { resourceAsset }, materialOverridesBySubset);
+        }
+
+        /// <summary>
+        /// Wraps a GameObject that's in Sims coordinate space with the transform that converts it to
+        /// Unity's coordinate space - the same wrapping `CreateRootScenegraph` applies, exposed for
+        /// content assembled from loose pieces rather than a single scenegraph component.
+        /// </summary>
+        public static GameObject WrapInSimsToUnityTransform(GameObject content)
+        {
+            var simsTransform = new GameObject(content.name + "_transform");
+
+            // Apply a transformation to convert from the sims coordinate space to unity.
+            simsTransform.transform.Rotate(-90, 0, 0);
+            simsTransform.transform.localScale = new Vector3(1, -1, 1);
+
+            content.transform.SetParent(simsTransform.transform, worldPositionStays:false);
+            return simsTransform;
         }
 
         /// <summary>
         /// Creates a scenegraph component from a multiple scenegraph resource assets.
         /// </summary>
-        public static ScenegraphComponent CreateScenegraphComponent(ScenegraphResourceAsset[] resourceAssets)
+        public static ScenegraphComponent CreateScenegraphComponent(ScenegraphResourceAsset[] resourceAssets,
+            Dictionary<string, ScenegraphMaterialDefinitionAsset> materialOverridesBySubset = null)
         {
             var scenegraph = new GameObject("scenegraph", typeof(ScenegraphComponent));
             var scenegraphComponent = scenegraph.GetComponent<ScenegraphComponent>();
 
             scenegraphComponent.CreateFromScenegraphComponents(resourceAssets.Select(asset => asset.ResourceCollection),
-                resourceAssets[0].GlobalTGI);
+                resourceAssets[0].GlobalTGI, materialOverridesBySubset);
 
             return scenegraphComponent;
         }
 
         private ResourceKey _resourceAssetKey;
 
+        /// <summary>
+        /// Per-subset material overrides (cTSSkinEntry::MaterialOverrides - see SkinEntryAsset) applied
+        /// on top of whatever material a shape's own SHPE data names for that subset, e.g. genetics
+        /// (eye color, etc.) layered onto a base head resource's neutral placeholder materials. Keyed
+        /// by subset/primitive name, matching ScenegraphShapeAsset.Materials' own keys. Applies
+        /// uniformly to every shape rendered within this component - see RenderShapePrimitives.
+        /// </summary>
+        private Dictionary<string, ScenegraphMaterialDefinitionAsset> _materialOverridesBySubset =
+            new Dictionary<string, ScenegraphMaterialDefinitionAsset>();
+
         private void CreateFromScenegraphComponents(IEnumerable<ScenegraphResourceCollection> resourceCollections,
-            ResourceKey resourceAssetKey)
+            ResourceKey resourceAssetKey, Dictionary<string, ScenegraphMaterialDefinitionAsset> materialOverridesBySubset)
         {
             _resourceAssetKey = resourceAssetKey;
+            if (materialOverridesBySubset != null)
+            {
+                _materialOverridesBySubset = materialOverridesBySubset;
+            }
 
             foreach (var rCol in resourceCollections)
             {
@@ -111,6 +137,13 @@ namespace OpenTS2.Components
         /// </summary>
         public readonly Dictionary<uint, Transform> BoneCRC32ToTransform = new Dictionary<uint, Transform>();
         public readonly Dictionary<string, Transform> BoneNamesToTransform = new Dictionary<string, Transform>();
+        /// <summary>
+        /// Rendered primitive GameObjects grouped by the bone tag they're attached at (a ShapeRefNode's
+        /// own transform tag for CRES content, or a bare SHPE's own ShapeBlock.Tag). Used by
+        /// TryAttachPart to graft another part's content onto a matching bone here, and to find/replace
+        /// whatever was already at that bone slot - see SimCharacterComponent.CreatePersonOutfit.
+        /// </summary>
+        public readonly Dictionary<string, List<GameObject>> BoneNamesToAttachedObjects = new Dictionary<string, List<GameObject>>();
         /// <summary>
         /// A mapping of blend shapes such as "recliningbend" and "slot_0_indent" to the paths relative to the
         /// scenegraph component "chair_living/fabric". This can include multiple components, hence the list of strings.
@@ -372,21 +405,51 @@ namespace OpenTS2.Components
             // Hold a strong reference to the shape.
             parent.GetComponent<AssetReferenceComponent>().AddReference(shape);
 
+            var boneTag = shapeTransform.CompositionTree.Graph.Tag;
+            foreach (var primitiveObject in RenderShapePrimitives(shape, allowSkinning: true))
+            {
+                primitiveObject.transform.rotation = shapeTransform.Rotation;
+                primitiveObject.transform.position = shapeTransform.Transform;
+                primitiveObject.transform.SetParent(parent.transform, worldPositionStays:false);
+
+                if (boneTag != "")
+                {
+                    if (!BoneNamesToAttachedObjects.TryGetValue(boneTag, out var attached))
+                    {
+                        attached = new List<GameObject>();
+                        BoneNamesToAttachedObjects[boneTag] = attached;
+                    }
+                    attached.Add(primitiveObject);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Renders a shape's primitives as GameObjects (not yet parented/positioned). With
+        /// `allowSkinning`, meshes that need bone binding become `SkinnedMeshRenderer`s queued for
+        /// `BindBonesInMeshes()` (requires this component's own composition tree to have already
+        /// rendered a matching skeleton via `BoneNamesToTransform`/`_boneIdToTransform`) - otherwise
+        /// (or if there are no bones to bind against) everything renders as plain static geometry.
+        /// </summary>
+        private IEnumerable<GameObject> RenderShapePrimitives(ScenegraphShapeAsset shape, bool allowSkinning)
+        {
             shape.LoadModelsAndMaterials();
-            // Render out each model.
             foreach (var model in shape.Models)
             {
                 foreach (var primitive in model.Primitives)
                 {
-                    // If this group is not listed in the SHPE, we don't render it.
-                    if (!shape.Materials.TryGetValue(primitive.Key, out var material))
+                    // A material override for this subset (genetics, e.g. eye color) takes priority
+                    // over whatever material the shape's own SHPE data names for it. If this group is
+                    // not listed in either, we don't render it.
+                    if (!_materialOverridesBySubset.TryGetValue(primitive.Key, out var material) &&
+                        !shape.Materials.TryGetValue(primitive.Key, out material))
                     {
                         continue;
                     }
 
                     GameObject primitiveObject;
-                    // Make a SkinnedMeshRender or a regular renderer depending on if we have blend shapes or bones.
-                    if (primitive.Value.NeedsSkinnedRenderer)
+                    // Make a SkinnedMeshRenderer or a regular renderer depending on if we have blend shapes or bones.
+                    if (allowSkinning && primitive.Value.NeedsSkinnedRenderer)
                     {
                         // Add an animation component so we can play animations in this scenegraph.
                         if (GetComponent<Animation>() == null)
@@ -394,15 +457,7 @@ namespace OpenTS2.Components
                             gameObject.AddComponent<Animation>();
                         }
 
-                        primitiveObject =
-                            new GameObject(primitive.Key, typeof(SkinnedMeshRenderer))
-                            {
-                                transform =
-                                {
-                                    rotation = shapeTransform.Rotation,
-                                    position = shapeTransform.Transform
-                                }
-                            };
+                        primitiveObject = new GameObject(primitive.Key, typeof(SkinnedMeshRenderer));
 
                         var skinnedRenderer = primitiveObject.GetComponent<SkinnedMeshRenderer>();
                         skinnedRenderer.sharedMesh = primitive.Value.Mesh;
@@ -421,24 +476,93 @@ namespace OpenTS2.Components
                     }
                     else
                     {
-                        primitiveObject =
-                            new GameObject(primitive.Key, typeof(MeshFilter), typeof(MeshRenderer))
-                            {
-                                transform =
-                                {
-                                    rotation = shapeTransform.Rotation,
-                                    position = shapeTransform.Transform
-                                }
-                            };
-
+                        primitiveObject = new GameObject(primitive.Key, typeof(MeshFilter), typeof(MeshRenderer));
                         primitiveObject.GetComponent<MeshFilter>().sharedMesh = primitive.Value.Mesh;
                         primitiveObject.GetComponent<MeshRenderer>().sharedMaterial =
                             material.GetAsUnityMaterial();
                     }
 
-                    primitiveObject.transform.SetParent(parent.transform, worldPositionStays:false);
+                    yield return primitiveObject;
                 }
             }
+        }
+
+        /// <summary>
+        /// Renders a shape's meshes as loose, unskinned static geometry parented under a new
+        /// GameObject - for content that isn't attached to any skeleton (e.g. resolved CAS outfit
+        /// parts, see SimCharacterComponent.CreatePersonOutfit - clothing/hair meshes are normally
+        /// bone-attached onto a Sim's body via bone-tag matching in game, which this doesn't do).
+        /// </summary>
+        public static GameObject CreateStandaloneShapeGameObject(ScenegraphShapeAsset shape,
+            Dictionary<string, ScenegraphMaterialDefinitionAsset> materialOverridesBySubset = null)
+        {
+            var shapeObject = new GameObject(shape.GlobalTGI.ToString(), typeof(ScenegraphComponent), typeof(AssetReferenceComponent));
+            var component = shapeObject.GetComponent<ScenegraphComponent>();
+            shapeObject.GetComponent<AssetReferenceComponent>().AddReference(shape);
+            if (materialOverridesBySubset != null)
+            {
+                component._materialOverridesBySubset = materialOverridesBySubset;
+            }
+
+            var boneTag = shape.ShapeBlock.Tag;
+            List<GameObject> attached = null;
+            if (boneTag != "")
+            {
+                attached = new List<GameObject>();
+                component.BoneNamesToAttachedObjects[boneTag] = attached;
+            }
+
+            foreach (var primitiveObject in component.RenderShapePrimitives(shape, allowSkinning: false))
+            {
+                primitiveObject.transform.SetParent(shapeObject.transform, worldPositionStays: false);
+                attached?.Add(primitiveObject);
+            }
+
+            return shapeObject;
+        }
+
+        /// <summary>
+        /// Grafts <paramref name="objects"/> onto this component's own bone tagged <paramref name="tag"/>,
+        /// replacing whatever was already attached there (if anything) - see BoneNamesToAttachedObjects.
+        /// This is a simplification of the real engine's AddSkin, which merges/accumulates onto the
+        /// target bone's existing shape-ref rather than replacing it; that's not reproduced here since
+        /// our one-shape-per-slot rendering model has no equivalent notion of an accumulating shape-ref,
+        /// and replacing is what's needed to stop an unattached placeholder (e.g. a skeleton's own
+        /// default head/hand shape) from rendering underneath the real, correctly-overridden content.
+        /// Callers are responsible for migrating the source's AssetReferenceComponent references onto
+        /// this component before discarding the (now emptied) source - see SimCharacterComponent.CreatePersonOutfit.
+        /// Returns false (no-op) if this component has no bone tagged <paramref name="tag"/>.
+        /// </summary>
+        public bool TryAttachPart(string tag, IReadOnlyList<GameObject> objects)
+        {
+            if (!BoneNamesToTransform.TryGetValue(tag, out var boneTransform))
+            {
+                return false;
+            }
+
+            if (BoneNamesToAttachedObjects.TryGetValue(tag, out var existing))
+            {
+                foreach (var existingObject in existing)
+                {
+                    Destroy(existingObject);
+                }
+                existing.Clear();
+            }
+            else
+            {
+                existing = new List<GameObject>();
+                BoneNamesToAttachedObjects[tag] = existing;
+            }
+
+            foreach (var attachedObject in objects)
+            {
+                attachedObject.transform.SetParent(boneTransform.parent, worldPositionStays: false);
+                attachedObject.transform.position = boneTransform.position;
+                attachedObject.transform.rotation = boneTransform.rotation;
+                existing.Add(attachedObject);
+            }
+
+            return true;
         }
 
         private void RenderLightRefNode(GameObject parent, ScenegraphResourceCollection rCol, LightRefNodeBlock lightRef)
