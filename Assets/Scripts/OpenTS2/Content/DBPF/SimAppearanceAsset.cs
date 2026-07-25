@@ -22,6 +22,20 @@ namespace OpenTS2.Content.DBPF
         public float Stretch => float.Parse(_properties.GetProperty<StringProp>("stretch").Value);
 
         /// <summary>
+        /// Gender flag - matched against SkinEntryAsset's own Gender when picking a body skin
+        /// material from the skin catalog. Null if this resource doesn't carry the property.
+        /// </summary>
+        public uint? Gender => _properties.Properties.TryGetValue("gender", out var value)
+            ? PropertySet.ParsePropAsUint32(value) : (uint?)null;
+
+        /// <summary>
+        /// The sim's selected skin tone, as a GUID-style ID string (e.g.
+        /// "00000001-0000-0000-0000-000000000000"). Null if absent.
+        /// </summary>
+        public string SkinTone => _properties.Properties.TryGetValue("skincolor", out var value)
+            ? ((StringProp)value).Value : null;
+
+        /// <summary>
         /// Each entry is either a resolved resource key, or an index into the corresponding ResourceKeyListAsset that
         /// must be resolved by the caller.
         /// </summary>

@@ -9,9 +9,49 @@ namespace OpenTS2.Content.DBPF
     {
         public SkinEntryAsset(PropertySet propertySet)
         {
+            _properties = propertySet;
             ShapeResourceKey = ParseKeyOrIndex(propertySet, "shape");
             ResourceKey = ParseKeyOrIndex(propertySet, "resource");
             MaterialOverrides = ParseMaterialOverrides(propertySet);
+        }
+
+        private readonly PropertySet _properties;
+
+        /// <summary>
+        /// The catalog entry's own kind, e.g. "skin" (any CAS-selectable content - hair, clothes,
+        /// swimwear, or a bare-body default), "facearchetype", "faceneutral", "skintone", "hairtone", "textureoverlay",
+        /// "meshoverlay", "facemodifier". Only present on entries loaded as part of the global skin catalog
+        /// (TSData/Res/Catalog/Skins/Skins.package). Null if absent.
+        /// </summary>
+        public string Type => _properties.Properties.TryGetValue("type", out var value) ? ((StringProp)value).Value : null;
+
+        /// <summary>Human-readable catalog name, e.g. "afbodyswimwear_redbikini". Null if absent.</summary>
+        public string Name => _properties.Properties.TryGetValue("name", out var value) ? ((StringProp)value).Value : null;
+
+        /// <summary>Age flag this catalog entry is valid for. Null if absent.</summary>
+        public uint? Age => ParseOptionalUint32("age");
+
+        /// <summary>Gender flag this catalog entry is valid for. Null if absent.</summary>
+        public uint? Gender => ParseOptionalUint32("gender");
+
+        /// <summary>Species flag this catalog entry is valid for. Null if absent.</summary>
+        public uint? Species => ParseOptionalUint32("species");
+
+        /// <summary>
+        /// Body-part-slot <see cref="OutfitCategory"/> bitwise ANDed.
+        /// </summary>
+        public uint? Category => ParseOptionalUint32("category");
+
+        /// <summary>
+        /// The skin tone this catalog entry represents, as a GUID-style ID string - matched
+        /// against SimAppearanceAsset's own SkinTone. Null if absent.
+        /// </summary>
+        public string SkinTone => _properties.Properties.TryGetValue("skintone", out var value)
+            ? ((StringProp)value).Value : null;
+
+        private uint? ParseOptionalUint32(string key)
+        {
+            return _properties.Properties.TryGetValue(key, out var value) ? PropertySet.ParsePropAsUint32(value) : (uint?)null;
         }
 
         public IResourceKeyOrIndex ShapeResourceKey { get; }

@@ -23,6 +23,8 @@ public class SimAppearanceCodecTest
 
         Assert.IsNotNull(simAppearanceAsset);
         Assert.AreEqual(simAppearanceAsset.Stretch, 0.94, delta:.01);
+        Assert.That(simAppearanceAsset.SkinTone, Is.EqualTo("00000002-0000-0000-0000-000000000000"));
+        Assert.That(simAppearanceAsset.Gender, Is.EqualTo(2));
     }
 
     [Test]
